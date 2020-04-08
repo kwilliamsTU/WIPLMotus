@@ -15,10 +15,15 @@ library(motus)
 library(tidyverse)
 library(lubridate)
 library(rworldmap)
+library(ggmap)
 
 getwd()
 proj.num<-188
-sql.motus <- tagme(projRecv = proj.num, update = TRUE, dir = "./data/")# As this is the first time you are downloading data for project 188, set new = TRUE and update = TRUE.  This will create a .motus file in your current working directory, which was shown above using getwd() This will also create an SQL object in your R environment called 'sql.motus'
+sql.motus <- tagme(projRecv = proj.num, update = TRUE, dir = "./data/")#This will create a .motus file in your current working directory, which was shown above using getwd() This will also create an SQL object in your R environment called 'sql.motus'
+checkVersion(sql.motus)
+
+meta<-metadata(sql.motus, projectIDs= 188) #access all tag and receiver metadata for all projects in the network.
+
 file.name<- dbConnect(SQLite(), "./data/project-188.motus")
 # specify the filepath where your .motus file is saved, and the file name.
 dbListTables(file.name) # get a list of tables in the .motus file specified above.
@@ -67,7 +72,7 @@ df.alltagsSub <- filter(tbl.alltags, motusTagID %in%
 #Using dplyr(), your virtual table can also be summarized before converting to a flat file. For example, to find the number of different detections for each tag at each receiver:
 df.detectSum <- tbl.alltags %>% group_by(motusTagID, recv) %>% tally() %>% collect() %>% as.data.frame()
 
-write.csv(df.alltags, "./newdata/df.alltags.CSV")
+write.csv(df.alltags, "./data/df.alltags.csv")
 
 ```
 
@@ -97,19 +102,6 @@ In addition to these tables, there are also ‘virtual’ tables or ‘views’,
 allambigs: lists in long-data format each motusTagID (up to 6) associated with each negative ambigID.
 alltags: provides the full detection data for all tags, and all ambiguous (duplicate) tags, associated with your project. Ambiguous detections are repeated for each motusTagID represented by each ambigID.
 
-#Update detections data
-```{r Load/update existing database, Load metadata}
-proj.num <-188
-
-sql.motus <- tagme(projRecv = proj.num, new = FALSE, update = TRUE, dir = "./newdata/")
-
-#check if new data are available
-tellme(projRecv = proj.num, dir = "./newdata/")
-
-metadata(sql.motus, projectIDs= 188) #access all tag and receiver metadata for all projects in the network.
-
-checkVersion(sql.motus)
-```
 SQLite objects will be prefixed with ‘sql.’, virtual table objects will be prefixed with ‘tbl.’, and dataframe objects will be prefixed with ‘df.’; the rest of the name will include the name of the .motus table that the data originates from.
 
 ```{r check number of tags and confirm tag IDs}
@@ -134,7 +126,7 @@ df.tagDeps <- tbl.tagDeps %>%
                 collect() %>%
                 as.data.frame() %>% # once in df format, can format dates with lubridate
                 mutate(tsStart = as_datetime(tsStart, tz = "UTC", origin = "2018-06-01"),
-                       tsEnd = as_datetime(tsEnd, tz = "UTC", origin = "2018-08-31")) 
+                       tsEnd = as_datetime(tsEnd, tz = "UTC", origin = "2020-08-31")) 
 
 anti_join(df.tags, df.tagDeps, by = "tagID") 
 
@@ -142,7 +134,6 @@ anti_join(df.tags, df.tagDeps, by = "tagID")
 
 
 ```{r}
-sql.motus <- tagme(proj.num, update = TRUE, dir = "./newdata/")
 tbl.alltags <- tbl(sql.motus, "alltags")
 
 df.alltags <- tbl.alltags %>% 
@@ -152,8 +143,8 @@ df.alltags <- tbl.alltags %>%
                            recvDeployLon, gpsLon), 
          recvAlt = if_else(is.na(gpsAlt), recvDeployAlt, gpsAlt)) %>%
   select(-noise, -slop, -burstSlop, -done, -bootnum, -mfgID, 
-         -codeSet, -mfg, -nomFreq, -markerNumber, -markerType, 
-         -tagDeployComments, -fullID, -deviceID, -recvDeployLat, 
+         -codeSet, -mfg, -nomFreq, -markerType, 
+         -tagDepComments, -fullID, -deviceID, -recvDeployLat, 
          -recvDeployLon, -recvDeployAlt, -speciesGroup, -gpsLat, 
          -gpsLon, - recvAlt, - recvSiteName) %>%
   collect() %>%
@@ -244,9 +235,6 @@ df.alltags %>%
   tally() %>%
   spread(key = rl.gt.3, value=n)
 
-
-
-
 #Although some of these may be valid detections, we have found it simpler to just remove them from our analysis, and possibly revisit them at a later stage. We therefore filter on runLen (> 3) for most subsequent operations. We save these in a block to add to our other filters later.
 # df.alltags has 31423 obs of 41 variables. After filtering run lengths greater than 2, we created another object called df.alltags.sub that has 27.135 obs of 41 variables
 df.alltags.sub <- filter(df.alltags, runLen > 3)
@@ -271,8 +259,8 @@ fun.getpath <- function(df)
   df %>%
     filter(tagProjID == proj.num, # keep only tags registered to the project
            !is.na(recvLat) | !(recvLat == 0)) %>% # drops data without lon/lat
-    group_by(motusTagID, runID, recvDeployName, 
-             tagDeployLon, tagDeployLat, recvLat, recvLon) %>%
+    group_by(motusTagID, markerNumber, runID, recvDeployName, 
+             tagDepLon, tagDepLat, recvLat, recvLon) %>%
     filter(recvLat< 40) %>% # filter out everything north of 40 degrees latitude
     #summarizing by runID to get max run length and mean time stamp:
     summarize(max.runLen = max(runLen), ts.h = mean(ts)) %>% 
@@ -289,6 +277,30 @@ unique(df.alltags.path$recvDeployName)
 
 ```
 
+
+```{r Plotting the data}
+df.alltags.path <- df.alltags.path %>%
+  mutate(ts = as_datetime(ts.h, tz = "UTC"), # convert ts to POSIXct format
+         year = year(ts.h), # extract year from ts
+         doy = yday(ts.h)) %>% # extract numeric day of year from ts
+  filter(!is.na(recvLat))
+head(df.alltags.path)
+
+
+#black and white plot of detections from 2018-2019
+df.alltags.path.2 <- df.alltags.path %>%
+  mutate(hour = as.POSIXct(round(ts, "hour"))) %>% 
+  select(motusTagID,runID, markerNumber,tagDepLat, tagDepLon, 
+         recvLat, recvLon, recvDeployName, year, doy, hour) %>% 
+  distinct()
+
+ggplot(data = df.alltags.path.2, aes(x = hour, y = as.factor(motusTagID))) +
+  theme_bw() +
+  geom_point() + 
+  labs(x = "Time (rounded to hour)", y = "MotusTagID")
+
+ggsave("motusTagplot.png",plot= last_plot())
+```
 
 
 
