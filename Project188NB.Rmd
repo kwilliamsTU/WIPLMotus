@@ -12,6 +12,7 @@ Sys.setenv(TZ = "GMT") # set system environment to GMT
 
 library(devtools)
 library(motus)
+library(RSQLite)
 library(tidyverse)
 library(lubridate)
 library(rworldmap)
@@ -19,7 +20,7 @@ library(ggmap)
 
 getwd()
 proj.num<-188
-sql.motus <- tagme(projRecv = proj.num, update = TRUE, dir = "./data/")#This will create a .motus file in your current working directory, which was shown above using getwd() This will also create an SQL object in your R environment called 'sql.motus'
+sql.motus <- tagme(projRecv = proj.num,new=TRUE, update = TRUE, dir = "./data/")#This will create a .motus file in your current working directory, which was shown above using getwd() This will also create an SQL object in your R environment called 'sql.motus'
 checkVersion(sql.motus)
 
 meta<-metadata(sql.motus, projectIDs= 188) #access all tag and receiver metadata for all projects in the network.
@@ -56,7 +57,7 @@ df.alltags <- tbl.alltags %>%
 
 #Note that time stamps can only be manipulated in this way after collecting the data into a flat dataframe.
 
-head(tbl.alltags)
+head(df.alltags)
 
 ```
 
